@@ -28,7 +28,6 @@ class Interface:
     _logger = None
 
     def __init__(self, raw_obj):
-
         self._raw_obj = raw_obj
         self._wifi_ctrl = wifiutil.WifiUtil()
         self._logger = logging.getLogger('pywifi')
@@ -61,6 +60,22 @@ class Interface:
                 self._logger.info("\tsignal: %d", bss.signal)
 
         return bsses
+
+    def get_current_network_profile(self):
+        """
+        Get current AP profile.
+        """
+
+        profile = self._wifi_ctrl.get_current_network_profile(self._raw_obj)
+
+        if self._logger.isEnabledFor(logging.INFO):
+            self._logger.info("Get profile:")
+            self._logger.info("\tssid: %s", profile.ssid)
+            self._logger.info("\tauth: %s", profile.auth)
+            self._logger.info("\takm: %s", profile.akm)
+            self._logger.info("\tcipher: %s", profile.cipher)
+
+        return profile
 
     def add_network_profile(self, params):
         """Add the info of the AP for connecting afterward."""

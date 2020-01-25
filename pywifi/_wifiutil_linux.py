@@ -4,9 +4,10 @@
 """Implementations of wifi functions of Linux."""
 
 import logging
+import os
+import re
 import socket
 import stat
-import os
 
 from .const import *
 from .profile import Profile
@@ -119,6 +120,18 @@ class WifiUtil():
 
         self._send_cmd_to_wpas(obj['name'], 'DISCONNECT')
 
+    def get_current_network_profile(self, obj):
+        """
+        Get current AP profile.
+        """
+
+        current_network = None
+        for network in self._get_networks(obj):
+            if 'CURRENT' in network[3]:
+                current_network = self._get_network_profile(obj, network[0])
+
+        return current_network
+
     def add_network_profile(self, obj, params):
         """Add an AP profile for connecting to afterward."""
 
@@ -167,84 +180,20 @@ class WifiUtil():
         return params
 
     def network_profiles(self, obj):
-        """Get AP profiles."""
+        """
+        Get AP profiles.
+        """
 
         networks = []
-        network_ids = []
-        network_summary = self._send_cmd_to_wpas(
-            obj['name'],
-            'LIST_NETWORKS',
-            True)
-        network_summary = network_summary[:-1].split('\n')
-        if len(network_summary) == 1:
-            return networks
-
-        for l in network_summary[1:]:
-            network_ids.append(l.split()[0])
-
-        for network_id in network_ids:
-            network = Profile()
-
-            network.id = network_id
-
-            ssid = self._send_cmd_to_wpas(
-                obj['name'],
-                'GET_NETWORK {} ssid'.format(network_id), True)
-            if ssid.upper().startswith('FAIL'):
-                continue
-            else:
-                network.ssid = ssid[1:-1]
-
-            key_mgmt = self._send_cmd_to_wpas(
-                obj['name'],
-                'GET_NETWORK {} key_mgmt'.format(network_id),
-                True)
-
-            network.akm = []
-            if key_mgmt.upper().startswith('FAIL'):
-                continue
-            else:
-                if key_mgmt.upper() in ['WPA-PSK']:
-                    proto = self._send_cmd_to_wpas(
-                        obj['name'],
-                        'GET_NETWORK {} proto'.format(network_id),
-                        True)
-
-                    if proto.upper() == 'RSN':
-                        network.akm.append(AKM_TYPE_WPA2PSK)
-                    else:
-                        network.akm.append(AKM_TYPE_WPAPSK)
-                elif key_mgmt.upper() in ['WPA-EAP']:
-                    proto = self._send_cmd_to_wpas(
-                        obj['name'],
-                        'GET_NETWORK {} proto'.format(network_id),
-                        True)
-
-                    if proto.upper() == 'RSN':
-                        network.akm.append(AKM_TYPE_WPA2)
-                    else:
-                        network.akm.append(AKM_TYPE_WPA)
-
-            ciphers = self._send_cmd_to_wpas(
-                obj['name'],
-                'GET_NETWORK {} pairwise'.format(network_id),
-                True).split(' ')
-
-            if ciphers[0].upper().startswith('FAIL'):
-                continue
-            else:
-                # Assume the possible ciphers TKIP and CCMP
-                if len(ciphers) == 1:
-                    network.cipher = cipher_str_to_value(ciphers[0].upper())
-                elif 'CCMP' in ciphers:
-                    network.cipher = CIPHER_TYPE_CCMP
-
-            networks.append(network)
+        for network in self._get_networks(obj):
+            networks.append(self._get_network_profile(obj, network[0]))
 
         return networks
 
     def remove_network_profile(self, obj, params):
-        """Remove the specified AP profiles"""
+        """
+        Remove the specified AP profiles
+        """
 
         network_id = -1
         profiles = self.network_profiles(obj)
@@ -254,7 +203,8 @@ class WifiUtil():
                 network_id = profile.id
 
         if network_id != -1:
-            self._send_cmd_to_wpas(obj['name'],
+            self._send_cmd_to_wpas(
+                obj['name'],
                 'REMOVE_NETWORK {}'.format(network_id))
 
     def remove_all_network_profiles(self, obj):
@@ -263,7 +213,9 @@ class WifiUtil():
         self._send_cmd_to_wpas(obj['name'], 'REMOVE_NETWORK all')
 
     def status(self, obj):
-        """Get the wifi interface status."""
+        """
+        Get the wifi interface status.
+        """
 
         reply = self._send_cmd_to_wpas(obj['name'], 'STATUS', True)
         result = reply.split('\n')
@@ -288,6 +240,78 @@ class WifiUtil():
                 self._connect_to_wpa_s(f)
 
         return ifaces
+
+    def _get_networks(self, obj):
+        networks = []
+        network_summary = self._send_cmd_to_wpas(
+            obj['name'],
+            'LIST_NETWORKS',
+            True)
+        for network in [n.split('\t') for n in network_summary.strip().split('\n')][1:]:
+            if len(network) == 3:
+                network.append('[]')
+            network[3] = re.findall(r'\[([\w-]*)\]', network[3])
+            print(network)
+            networks.append(network)
+        return networks
+
+    def _get_network_profile(self, obj, network_id):
+        network = Profile()
+        network.id = network_id
+
+        ssid = self._send_cmd_to_wpas(
+            obj['name'],
+            'GET_NETWORK {} ssid'.format(network_id), True)
+        if ssid.upper().startswith('FAIL'):
+            return None
+        else:
+            network.ssid = ssid[1:-1]
+
+        key_mgmt = self._send_cmd_to_wpas(
+            obj['name'],
+            'GET_NETWORK {} key_mgmt'.format(network_id),
+            True)
+
+        network.akm = []
+        if key_mgmt.upper().startswith('FAIL'):
+            return None
+        else:
+            if key_mgmt.upper() in ['WPA-PSK']:
+                proto = self._send_cmd_to_wpas(
+                    obj['name'],
+                    'GET_NETWORK {} proto'.format(network_id),
+                    True)
+
+                if proto.upper() == 'RSN':
+                    network.akm.append(AKM_TYPE_WPA2PSK)
+                else:
+                    network.akm.append(AKM_TYPE_WPAPSK)
+            elif key_mgmt.upper() in ['WPA-EAP']:
+                proto = self._send_cmd_to_wpas(
+                    obj['name'],
+                    'GET_NETWORK {} proto'.format(network_id),
+                    True)
+
+                if proto.upper() == 'RSN':
+                    network.akm.append(AKM_TYPE_WPA2)
+                else:
+                    network.akm.append(AKM_TYPE_WPA)
+
+        ciphers = self._send_cmd_to_wpas(
+            obj['name'],
+            'GET_NETWORK {} pairwise'.format(network_id),
+            True).split(' ')
+
+        if ciphers[0].upper().startswith('FAIL'):
+            return None
+        else:
+            # Assume the possible ciphers TKIP and CCMP
+            if len(ciphers) == 1:
+                network.cipher = cipher_str_to_value(ciphers[0].upper())
+            elif 'CCMP' in ciphers:
+                network.cipher = CIPHER_TYPE_CCMP
+
+        return network
 
     def _connect_to_wpa_s(self, iface):
 
